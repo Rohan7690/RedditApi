@@ -3,34 +3,63 @@ import os
 from dotenv import load_dotenv
 import time
 import re
+from prawcore.exceptions import PrawcoreException
+from requests.exceptions import RequestException
 
 # Load environment variables
 load_dotenv()
 
 # Reddit API credentials
-reddit = praw.Reddit(
-    client_id=os.getenv('REDDIT_CLIENT_ID'),
-    client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
-    username=os.getenv('REDDIT_USERNAME'),
-    password=os.getenv('REDDIT_PASSWORD'),
-    user_agent="EnhancedRedditSearch/1.0"
-)
+try:
+    reddit = praw.Reddit(
+        client_id=os.getenv('REDDIT_CLIENT_ID'),
+        client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
+        username=os.getenv('REDDIT_USERNAME'),
+        password=os.getenv('REDDIT_PASSWORD'),
+        user_agent="ImprovedRedditSearch/1.0"
+    )
+    print("Successfully connected to Reddit API")
+except Exception as e:
+    print(f"Error connecting to Reddit API: {str(e)}")
+    print("Please check your .env file and ensure all credentials are correct.")
+    exit(1)
 
-def search_subreddit(subreddit_name, keywords, limit=100, search_comments=False):
-    subreddit = reddit.subreddit(subreddit_name)
-    matching_posts = []
+def search_subreddit(subreddit_name, keywords, limit=100, search_comments=False, timeout=30):
+    print(f"Searching r/{subreddit_name} for keywords: {', '.join(keywords)}")
+    print(f"Searching in comments: {'Yes' if search_comments else 'No'}")
+    
+    try:
+        subreddit = reddit.subreddit(subreddit_name)
+        matching_items = []
+        start_time = time.time()
 
-    for post in subreddit.new(limit=limit):
-        if matches_keywords(post.titlworde, keywords) or matches_keywords(post.selftext, keywords):
-            matching_posts.append(format_post(post))
-        
-        if search_comments:
-            post.comments.replace_more(limit=0)
-            for comment in post.comments.list():
-                if matches_keywords(comment.body, keywords):
-                    matching_posts.append(format_comment(comment, post))
+        for post in subreddit.new(limit=limit):
+            if time.time() - start_time > timeout:
+                print(f"Search timeout reached after {timeout} seconds")
+                break
 
-    return matching_posts
+            if matches_keywords(post.title, keywords) or matches_keywords(post.selftext, keywords):
+                matching_items.append(format_post(post))
+                print(f"Found matching post: {post.title}")
+
+            if search_comments:
+                post.comments.replace_more(limit=0)
+                for comment in post.comments.list():
+                    if matches_keywords(comment.body, keywords):
+                        matching_items.append(format_comment(comment, post))
+                        print(f"Found matching comment in post: {post.title}")
+
+        print(f"Search completed. Found {len(matching_items)} matching items.")
+        return matching_items
+
+    except PrawcoreException as e:
+        print(f"Reddit API error: {str(e)}")
+    except RequestException as e:
+        print(f"Network error: {str(e)}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {str(e)}")
+
+    return []
 
 def matches_keywords(text, keywords):
     return any(re.search(r'\b' + re.escape(keyword) + r'\b', text, re.IGNORECASE) for keyword in keywords)
@@ -58,7 +87,9 @@ def format_comment(comment, post):
     }
 
 def monitor_subreddit(subreddit_name, keywords, check_interval=60, search_comments=False):
-    print(f"Monitoring r/{subreddit_name} for keywords: {', '.join(keywords)}")
+    print(f"Starting to monitor r/{subreddit_name}")
+    print(f"Keywords: {', '.join(keywords)}")
+    print(f"Checking every {check_interval} seconds")
     print(f"Searching in comments: {'Yes' if search_comments else 'No'}")
     
     while True:
@@ -87,6 +118,9 @@ def monitor_subreddit(subreddit_name, keywords, check_interval=60, search_commen
             
             print(f"\nWaiting for {check_interval} seconds before next check...")
             time.sleep(check_interval)
+        except KeyboardInterrupt:
+            print("\nMonitoring stopped by user.")
+            break
         except Exception as e:
             print(f"An error occurred: {str(e)}")
             print("Waiting for 60 seconds before retrying...")
